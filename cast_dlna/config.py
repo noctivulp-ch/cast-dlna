@@ -34,6 +34,9 @@ def parse_args(argv=None):
                     help="Abrir cada cast en pantalla completa")
     ap.add_argument("--no-osd", action="store_true",
                     help="Desactivar el OSD de mpv en los comandos remotos")
+    ap.add_argument("--no-live-latency", action="store_true",
+                    help="No aplicar el modo de baja latencia a streams en "
+                         "directo (MPEG-TS, compartir pantalla)")
     ap.add_argument("--uuid", default="",
                     help="UUID fijo del dispositivo (default: derivado de la MAC)")
     ap.add_argument("-v", "--verbose", action="store_true",
@@ -66,6 +69,7 @@ class Config:
             os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "cast-dlna.sock")
         self.fullscreen = args.fullscreen
         self.osd = not args.no_osd
+        self.live_latency = not args.no_live_latency
         self.verbose = args.verbose
 
     def log(self, *parts):

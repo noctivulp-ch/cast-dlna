@@ -94,6 +94,22 @@ siguiente (`BadStatusLine`) y da el dispositivo por inalcanzable — CastLab
 llama entonces a `disconnect()` y responde «ningún dispositivo conectado» al
 pulsar reproducir, aunque el descubrimiento y la conexión hubiesen ido bien.
 
+**Compartir pantalla** (CastLab y similares) llega como un MPEG-TS en vivo
+(`video/mp2t`) por HTTP chunked. Al detectar ese MIME se activa el perfil
+`low-latency` de mpv y se desactivan cache y readahead; si además el stream no
+trae pista de audio, se activa `untimed`. Sin audio mpv no tiene reloj al que
+engancharse y el desfase contra los timestamps del emisor se acumula, así que
+el retraso crece con el tiempo. Medido con `scripts/measure-live-latency.py`:
+
+| | por defecto | `--no-live-latency` |
+|---|---|---|
+| `demuxer-cache-duration` | 0,0 s | 1,5 s |
+| `untimed` | sí | no |
+| `audio-buffer` | 0,0 s | 0,2 s |
+
+`--no-live-latency` restaura el comportamiento de VOD si algún stream sufre
+cortes por falta de búfer.
+
 **Subtítulos**: además de anunciar los MIME de subtítulo al principio del
 `Sink` de `GetProtocolInfo`, el `device.xml` declara `sec:ProductCap` /
 `sec:X_ProductCap` (marcador de capacidades de Samsung). Los controladores que
@@ -147,6 +163,14 @@ volumen, posición y eventos de verdad.
 
 `--suite` ejecuta las 27 acciones y reporta OK/fallo por cada una. Sirve
 igual para auditar renderers de terceros.
+
+`scripts/live-ts-source.py` — emite un MPEG-TS en vivo solo-vídeo por HTTP
+chunked, idéntico en forma al «screen share» de CastLab, para reproducir el
+caso sin el móvil.
+
+`scripts/measure-live-latency.py <puerto> <socket-mpv>` — castea ese stream y
+reporta el retraso retenido en el demuxer. Comparar con y sin
+`--no-live-latency`.
 
 ## Dependencias
 

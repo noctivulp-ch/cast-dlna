@@ -21,6 +21,12 @@ SUB_EXTS = (".srt", ".vtt", ".ass", ".ssa", ".sub", ".smi", ".ttml", ".dfxp")
 FORWARDED_HEADERS = ("referer", "referrer", "user-agent", "cookie",
                      "authorization", "origin", "x-forwarded-for")
 
+# MPEG-TS por HTTP es lo que emiten las funciones de compartir pantalla
+# (CastLab entre ellas). Es un stream en directo sin fin ni duración, así que
+# el buffering pensado para VOD se traduce en segundos de retraso.
+LIVE_MIMES = ("video/mp2t", "video/vnd.dlna.mpeg-tts", "video/mpeg-tts",
+              "application/x-mpegurl", "application/vnd.apple.mpegurl")
+
 
 def _localname(tag):
     return tag.rsplit("}", 1)[-1] if "}" in tag else tag
@@ -59,11 +65,13 @@ class Media:
         self.subtitles = []      # [(url, lang)]
         self.headers = {}
         self.mime = ""
+        self.live = False
         self.raw = ""
 
     def __repr__(self):
         return (f"Media(title={self.title!r}, dur={self.duration}, "
-                f"subs={len(self.subtitles)}, headers={list(self.headers)})")
+                f"subs={len(self.subtitles)}, headers={list(self.headers)}, "
+                f"live={self.live})")
 
 
 def parse_metadata(raw, uri=""):
@@ -102,6 +110,8 @@ def parse_metadata(raw, uri=""):
                     media.mime = parts[2] if len(parts) > 2 else ""
                 if not media.duration:
                     media.duration = parse_duration(_attr(elem, "duration"))
+                if any(mime in proto for mime in LIVE_MIMES):
+                    media.live = True
 
     _dedup_subs(media)
     _headers_from_uri(uri, media)

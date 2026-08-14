@@ -18,6 +18,15 @@ OBSERVED = [
     "playlist-count", "playlist-pos", "idle-active", "speed",
 ]
 
+# Propiedades que toca el modo de baja latencia; se guardan al arrancar mpv
+# para poder restaurar el comportamiento normal al volver a un vídeo VOD.
+LATENCY_PROPS = [
+    "audio-buffer", "vd-lavc-threads", "cache-pause", "demuxer-lavf-o",
+    "demuxer-lavf-probe-info", "demuxer-lavf-analyzeduration", "video-sync",
+    "interpolation", "video-latency-hacks", "stream-buffer-size",
+    "cache", "demuxer-readahead-secs", "cache-secs",
+]
+
 
 class MpvPlayer:
     def __init__(self, cfg, on_change=None):
@@ -35,6 +44,9 @@ class MpvPlayer:
         self._has_media = False
         self._running = True
         self._transitioning = False
+        self._live = False
+        self._low_latency = False
+        self._vod_defaults = {}
         threading.Thread(target=self._supervisor, daemon=True).start()
 
     # ── Ciclo de vida del proceso ──────────────────────────────────────────
@@ -83,6 +95,8 @@ class MpvPlayer:
     def _bootstrap(self):
         for i, prop in enumerate(OBSERVED, start=1):
             self._send({"command": ["observe_property", i, prop]})
+        self._low_latency = False
+        self._snapshot_latency_defaults()
 
     # ── Transporte IPC ─────────────────────────────────────────────────────
     def _send(self, payload, wait=False, timeout=1.5):
@@ -114,6 +128,13 @@ class MpvPlayer:
 
     def set_property(self, name, value):
         return self.command("set_property", name, value)
+
+    def get_property(self, name, timeout=1.5):
+        reply = self._send({"command": ["get_property", name]},
+                           wait=True, timeout=timeout)
+        if reply and reply.get("error") == "success":
+            return reply.get("data")
+        return None
 
     def _reader(self):
         buf = b""
@@ -158,6 +179,8 @@ class MpvPlayer:
             self._transitioning = False
             self._has_media = True
             self._stopped = False
+            if self._live and self.cfg.live_latency:
+                self._apply_untimed_if_silent()
             self._apply_pending_subs()
             if self._pending_start:
                 self.command("seek", self._pending_start, "absolute")
@@ -176,13 +199,52 @@ class MpvPlayer:
             self.command("sub-add", url, "select", lang or "sub")
         self._pending_subs = []
 
+    # ── Baja latencia para streams en directo ──────────────────────────────
+    def _snapshot_latency_defaults(self):
+        """Guarda los valores de fábrica para poder volver a modo VOD."""
+        self._vod_defaults = {}
+        for prop in LATENCY_PROPS:
+            value = self.get_property(prop)
+            if value is not None:
+                self._vod_defaults[prop] = value
+
+    def set_low_latency(self, enabled):
+        """El perfil low-latency de mpv desactiva cache y readahead y recorta
+        el análisis del demuxer. En VOD costaría robustez, pero en un stream
+        en directo esos búferes son puro retraso acumulado."""
+        if enabled == self._low_latency:
+            return
+        if enabled:
+            self.command("apply-profile", "low-latency")
+            self.set_property("cache", "no")
+            self.set_property("demuxer-readahead-secs", 0)
+            self.set_property("cache-secs", 0)
+        else:
+            for prop, value in self._vod_defaults.items():
+                self.set_property(prop, value)
+            self.set_property("untimed", False)
+        self._low_latency = enabled
+        self.cfg.log(f"[mpv] baja latencia {'activada' if enabled else 'desactivada'}")
+
+    def _apply_untimed_if_silent(self):
+        """Sin pista de audio mpv no tiene reloj al que engancharse y el
+        desfase con los timestamps del emisor se acumula. `untimed` muestra
+        cada cuadro en cuanto llega, que es lo que se quiere al compartir
+        pantalla — y por eso solo se activa si de verdad no hay audio."""
+        tracks = self.get_property("track-list") or []
+        if not any(t.get("type") == "audio" for t in tracks):
+            self.set_property("untimed", True)
+            self.cfg.log("[mpv] stream sin audio → untimed (latencia mínima)")
+
     # ── API de reproducción ────────────────────────────────────────────────
     def load(self, uri, headers=None, subtitles=None, title=None,
-             append=False, start=0.0):
+             append=False, start=0.0, live=False):
         if not append:
             self._transitioning = True
             self._pending_subs = list(subtitles or [])
             self._pending_start = start
+            self._live = live
+            self.set_low_latency(live and self.cfg.live_latency)
             self._apply_headers(headers or {})
             if title:
                 self.set_property("force-media-title", title)
