@@ -1,0 +1,9 @@
+lib/
+build/
+dist/
+*.build/
+*.dist/
+*.onefile-build/
+__pycache__/
+*.pyc
+dist/

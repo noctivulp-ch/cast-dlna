@@ -1,0 +1,305 @@
+"""Backend mpv: un único proceso persistente en modo idle, controlado por IPC JSON.
+
+Mantener mpv vivo entre casts es lo que permite implementar de verdad Seek,
+Pause, volumen, posición y eventos: si se relanzase el proceso por cada URI el
+socket IPC se perdería y el renderer solo podría reproducir y matar.
+"""
+
+import json
+import os
+import socket
+import subprocess
+import threading
+import time
+
+OBSERVED = [
+    "pause", "time-pos", "duration", "core-idle", "eof-reached",
+    "volume", "mute", "path", "media-title", "seekable",
+    "playlist-count", "playlist-pos", "idle-active", "speed",
+]
+
+
+class MpvPlayer:
+    def __init__(self, cfg, on_change=None):
+        self.cfg = cfg
+        self.on_change = on_change or (lambda: None)
+        self._proc = None
+        self._sock = None
+        self._req_id = 0
+        self._pending = {}
+        self._lock = threading.Lock()
+        self._props = {}
+        self._pending_subs = []
+        self._pending_start = 0.0
+        self._stopped = False         # STOPPED explícito vs. NO_MEDIA_PRESENT
+        self._has_media = False
+        self._running = True
+        self._transitioning = False
+        threading.Thread(target=self._supervisor, daemon=True).start()
+
+    # ── Ciclo de vida del proceso ──────────────────────────────────────────
+    def _spawn(self):
+        try:
+            os.unlink(self.cfg.ipc_socket)
+        except FileNotFoundError:
+            pass
+        cmd = [
+            self.cfg.mpv,
+            "--idle=yes",
+            "--force-window=no",
+            "--no-terminal",
+            "--keep-open=no",
+            f"--input-ipc-server={self.cfg.ipc_socket}",
+            f"--title=cast-dlna — {self.cfg.name}",
+        ] + self.cfg.mpv_args
+        self.cfg.log(f"[mpv] lanzando: {' '.join(cmd)}")
+        self._proc = subprocess.Popen(
+            cmd, env=os.environ.copy(),
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    def _supervisor(self):
+        while self._running:
+            if self._proc is None or self._proc.poll() is not None:
+                self._has_media = False
+                self._props.clear()
+                self._spawn()
+                if self._connect():
+                    threading.Thread(target=self._reader, daemon=True).start()
+                    self._bootstrap()
+            time.sleep(1)
+
+    def _connect(self):
+        for _ in range(50):
+            try:
+                s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                s.connect(self.cfg.ipc_socket)
+                self._sock = s
+                return True
+            except OSError:
+                time.sleep(0.1)
+        self.cfg.log("[mpv] no se pudo abrir el socket IPC")
+        return False
+
+    def _bootstrap(self):
+        for i, prop in enumerate(OBSERVED, start=1):
+            self._send({"command": ["observe_property", i, prop]})
+
+    # ── Transporte IPC ─────────────────────────────────────────────────────
+    def _send(self, payload, wait=False, timeout=1.5):
+        with self._lock:
+            sock = self._sock
+            if sock is None:
+                return None
+            self._req_id += 1
+            rid = self._req_id
+            payload = dict(payload, request_id=rid)
+            ev = threading.Event() if wait else None
+            if wait:
+                self._pending[rid] = [ev, None]
+            try:
+                sock.sendall((json.dumps(payload) + "\n").encode())
+            except OSError:
+                self._pending.pop(rid, None)
+                self._sock = None
+                return None
+        if not wait:
+            return None
+        ev.wait(timeout)
+        with self._lock:
+            entry = self._pending.pop(rid, None)
+        return entry[1] if entry else None
+
+    def command(self, *args, wait=False):
+        return self._send({"command": list(args)}, wait=wait)
+
+    def set_property(self, name, value):
+        return self.command("set_property", name, value)
+
+    def _reader(self):
+        buf = b""
+        sock = self._sock
+        while self._running and sock is not None:
+            try:
+                chunk = sock.recv(65536)
+            except OSError:
+                break
+            if not chunk:
+                break
+            buf += chunk
+            while b"\n" in buf:
+                line, buf = buf.split(b"\n", 1)
+                if not line.strip():
+                    continue
+                try:
+                    msg = json.loads(line.decode(errors="replace"))
+                except ValueError:
+                    continue
+                self._dispatch(msg)
+        with self._lock:
+            if self._sock is sock:
+                self._sock = None
+
+    def _dispatch(self, msg):
+        rid = msg.get("request_id")
+        if rid is not None and "error" in msg:
+            with self._lock:
+                entry = self._pending.get(rid)
+                if entry:
+                    entry[1] = msg
+                    entry[0].set()
+            return
+        event = msg.get("event")
+        if event == "property-change":
+            self._props[msg.get("name")] = msg.get("data")
+            if msg.get("name") in ("pause", "core-idle", "idle-active",
+                                   "duration", "volume", "mute", "path"):
+                self.on_change()
+        elif event == "file-loaded":
+            self._transitioning = False
+            self._has_media = True
+            self._stopped = False
+            self._apply_pending_subs()
+            if self._pending_start:
+                self.command("seek", self._pending_start, "absolute")
+                self._pending_start = 0.0
+            if self.cfg.fullscreen:
+                self.set_property("fullscreen", True)
+            self.on_change()
+        elif event in ("end-file", "idle"):
+            self._transitioning = False
+            self.on_change()
+        elif event == "start-file":
+            self._transitioning = True
+
+    def _apply_pending_subs(self):
+        for url, lang in self._pending_subs:
+            self.command("sub-add", url, "select", lang or "sub")
+        self._pending_subs = []
+
+    # ── API de reproducción ────────────────────────────────────────────────
+    def load(self, uri, headers=None, subtitles=None, title=None,
+             append=False, start=0.0):
+        if not append:
+            self._transitioning = True
+            self._pending_subs = list(subtitles or [])
+            self._pending_start = start
+            self._apply_headers(headers or {})
+            if title:
+                self.set_property("force-media-title", title)
+            else:
+                self.set_property("force-media-title", "")
+        self.command("loadfile", uri, "append" if append else "replace")
+        if not append:
+            self.set_property("pause", False)
+        self.on_change()
+
+    def _apply_headers(self, headers):
+        fields = []
+        for key, value in headers.items():
+            low = key.lower()
+            if low == "referer":
+                self.set_property("referrer", value)
+            elif low == "user-agent":
+                self.set_property("user-agent", value)
+            else:
+                fields.append(f"{key}: {value}")
+        self.set_property("http-header-fields", fields)
+
+    def play(self):
+        if self._has_media:
+            self.set_property("pause", False)
+        self.on_change()
+
+    def pause(self):
+        self.set_property("pause", True)
+        self.on_change()
+
+    def toggle_pause(self):
+        self.set_property("pause", not bool(self._props.get("pause")))
+        self.on_change()
+
+    def stop(self):
+        self.command("stop")
+        self._has_media = False
+        self._stopped = True
+        self._props["path"] = None
+        self.on_change()
+
+    def seek(self, seconds):
+        self.command("seek", float(seconds), "absolute")
+        self.on_change()
+
+    def seek_relative(self, delta):
+        self.command("seek", float(delta), "relative")
+
+    def next_track(self):
+        self.command("playlist-next", "weak")
+        self.on_change()
+
+    def prev_track(self):
+        self.command("playlist-prev", "weak")
+        self.on_change()
+
+    def set_volume(self, level):
+        self.set_property("volume", max(0, min(100, int(level))))
+        self.on_change()
+
+    def set_mute(self, muted):
+        self.set_property("mute", bool(muted))
+        self.on_change()
+
+    def set_speed(self, speed):
+        self.set_property("speed", float(speed))
+
+    def set_play_mode(self, mode):
+        loop = "inf" if mode in ("REPEAT_ONE", "REPEAT_ALL") else "no"
+        self.set_property("loop-file" if mode == "REPEAT_ONE" else "loop-playlist", loop)
+        self.set_property("shuffle", mode in ("SHUFFLE", "RANDOM"))
+
+    # ── Estado ─────────────────────────────────────────────────────────────
+    @property
+    def position(self):
+        return float(self._props.get("time-pos") or 0.0)
+
+    @property
+    def duration(self):
+        return float(self._props.get("duration") or 0.0)
+
+    @property
+    def volume(self):
+        return int(self._props.get("volume") or 0)
+
+    @property
+    def muted(self):
+        return bool(self._props.get("mute"))
+
+    @property
+    def seekable(self):
+        return bool(self._props.get("seekable"))
+
+    @property
+    def playlist_count(self):
+        return int(self._props.get("playlist-count") or 0)
+
+    @property
+    def playlist_pos(self):
+        return int(self._props.get("playlist-pos") or 0)
+
+    @property
+    def transport_state(self):
+        if self._transitioning:
+            return "TRANSITIONING"
+        if not self._has_media or self._props.get("idle-active"):
+            return "STOPPED" if self._stopped else "NO_MEDIA_PRESENT"
+        if self._props.get("pause"):
+            return "PAUSED_PLAYBACK"
+        if self._props.get("core-idle"):
+            return "TRANSITIONING"
+        return "PLAYING"
+
+    def shutdown(self):
+        self._running = False
+        self.command("quit")
+        time.sleep(0.2)
+        if self._proc and self._proc.poll() is None:
+            self._proc.terminate()
