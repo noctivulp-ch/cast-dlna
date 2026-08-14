@@ -278,6 +278,10 @@ CMS_SCPD = build_scpd(CMS_ACTIONS, CMS_VARS)
 # ProtocolInfo corto hace que algunos controladores rechacen el contenido
 # antes siquiera de intentar el SetAVTransportURI.
 _MIMES = [
+    # Los formatos de subtítulo van primero: hay controladores que solo
+    # inspeccionan el principio del Sink para decidir si hay soporte.
+    "smi/caption", "text/srt", "text/vtt", "text/sami", "text/ssa",
+    "application/x-subrip", "application/smil", "application/ttml+xml",
     "video/mp4", "video/x-matroska", "video/webm", "video/mpeg", "video/avi",
     "video/x-msvideo", "video/quicktime", "video/x-flv", "video/3gpp",
     "video/x-ms-wmv", "video/x-ms-asf", "video/mp2t", "video/MP2T",
@@ -299,11 +303,14 @@ SINK_PROTOCOL_INFO = ",".join(
 
 def device_xml(cfg):
     return f"""<?xml version="1.0" encoding="utf-8"?>
-<root xmlns="urn:schemas-upnp-org:device-1-0" xmlns:dlna="urn:schemas-dlna-org:device-1-0">
+<root xmlns="urn:schemas-upnp-org:device-1-0" xmlns:dlna="urn:schemas-dlna-org:device-1-0" xmlns:sec="http://www.sec.co.kr/dlna" xmlns:pnpx="http://schemas.microsoft.com/windows/pnpx/2005/11" xmlns:df="http://schemas.microsoft.com/windows/2008/09/devicefoundation">
   <specVersion><major>1</major><minor>0</minor></specVersion>
   <device>
     <deviceType>urn:schemas-upnp-org:device:MediaRenderer:1</deviceType>
     <dlna:X_DLNADOC xmlns:dlna="urn:schemas-dlna-org:device-1-0">DMR-1.50</dlna:X_DLNADOC>
+    <pnpx:X_compatibleId>MS_DigitalMediaDeviceClass_DMR_V001</pnpx:X_compatibleId>
+    <pnpx:X_deviceCategory>MediaDevices</pnpx:X_deviceCategory>
+    <df:X_deviceCategory>Multimedia.DMR</df:X_deviceCategory>
     <friendlyName>{cfg.name}</friendlyName>
     <manufacturer>cast-dlna</manufacturer>
     <manufacturerURL>https://mpv.io</manufacturerURL>
@@ -340,6 +347,14 @@ def device_xml(cfg):
         <eventSubURL>/evt/cms</eventSubURL>
       </service>
     </serviceList>
+    <!-- Marcador de capacidades de Samsung. Los controladores que mandan los
+         subtítulos por la vía `sec:CaptionInfoEx` (Web Video Caster entre
+         ellos) lo usan para decidir si el renderer los soporta; sin él
+         declaran el dispositivo como «sin soporte para subtítulos» aunque el
+         Sink anuncie text/srt. `Captions` es la capacidad relevante. -->
+    <sec:ProductCap>Y2020,WebURIPlayable,SeekTRACK_NR,NavigateInPause,Captions</sec:ProductCap>
+    <sec:X_ProductCap>Y2020,WebURIPlayable,SeekTRACK_NR,NavigateInPause,Captions</sec:X_ProductCap>
+    <pnpx:X_hardwareId>VEN_0105&amp;DEV_VD0001</pnpx:X_hardwareId>
     <presentationURL>{cfg.base_url}/</presentationURL>
   </device>
 </root>"""

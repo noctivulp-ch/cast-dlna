@@ -84,6 +84,22 @@ Se cargan con `sub-add` una vez mpv abre el archivo, y quedan seleccionados.
 manda `Referer`, se deriva del dominio del stream: sin él, muchos sitios
 devuelven 403 al reproducir desde el escritorio.
 
+## Compatibilidad con controladores
+
+**CastLab** comprueba que el dispositivo sigue vivo con `HEAD /device.xml` en
+cada ciclo de polling, y valida el icono con `HEAD /icon.png`. Una respuesta a
+`HEAD` debe llevar `Content-Length` pero **nunca cuerpo**: con keep-alive de
+HTTP/1.1 el cliente lee ese cuerpo como la línea de estado de la respuesta
+siguiente (`BadStatusLine`) y da el dispositivo por inalcanzable — CastLab
+llama entonces a `disconnect()` y responde «ningún dispositivo conectado» al
+pulsar reproducir, aunque el descubrimiento y la conexión hubiesen ido bien.
+
+**Subtítulos**: además de anunciar los MIME de subtítulo al principio del
+`Sink` de `GetProtocolInfo`, el `device.xml` declara `sec:ProductCap` /
+`sec:X_ProductCap` (marcador de capacidades de Samsung). Los controladores que
+mandan los subtítulos por `sec:CaptionInfoEx` — Web Video Caster entre ellos —
+lo usan para decidir si el renderer los soporta.
+
 ## Arquitectura
 
 ```

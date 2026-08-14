@@ -41,7 +41,12 @@ class UPnPHandler(BaseHTTPRequestHandler):
         for key, value in (extra or {}).items():
             self.send_header(key, value)
         self.end_headers()
-        if body:
+        # Una respuesta a HEAD lleva Content-Length pero nunca cuerpo: con
+        # keep-alive de HTTP/1.1 el cliente leería ese cuerpo como el inicio
+        # de la respuesta siguiente y la conexión se descarrila. CastLab
+        # comprueba la accesibilidad del dispositivo con HEAD /device.xml en
+        # cada ciclo de polling, así que esto lo desconectaba al reproducir.
+        if body and self.command != "HEAD":
             self.wfile.write(body)
 
     # ── GET / HEAD ─────────────────────────────────────────────────────────
