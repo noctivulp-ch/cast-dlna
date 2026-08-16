@@ -148,6 +148,28 @@ en lugar de mentir sobre el estado del reproductor.
 mandan los subtítulos por `sec:CaptionInfoEx` — Web Video Caster entre ellos —
 lo usan para decidir si el renderer los soporta.
 
+## Cambios de dirección IP
+
+El UDN es estable entre arranques a propósito: los controladores recuerdan el
+dispositivo por él, y uno aleatorio crearía una entrada nueva en la lista del
+móvil cada vez. El efecto secundario es que también cachean la `LOCATION`
+asociada a ese UDN, con `max-age` de 30 minutos.
+
+Con DHCP la dirección se mueve, y entonces el controlador sigue pidiendo el
+`device.xml` a una IP que ya no existe: el renderer «desaparece» o deja de
+responder, y vuelve solo cuando caduca la caché o llega el siguiente `NOTIFY`
+periódico —hasta 10 minutos—. De ahí que se comporte de forma intermitente.
+
+El renderer vigila su IP de salida cada 10 s. Al detectar un cambio manda
+`ssdp:byebye` con la identidad vieja, actualiza la `LOCATION`, incrementa el
+`BOOTID` —la señal de UPnP 1.1 para «olvida lo que sabías»— rehace la
+suscripción al grupo multicast en la interfaz nueva y emite una ráfaga de
+`ssdp:alive`. Verificable con `scripts/test-ip-change.py`.
+
+Las respuestas a `M-SEARCH` salen además por el socket que escucha en el 1900,
+para que le lleguen al controlador desde el mismo puerto al que preguntó, y se
+envían por duplicado: UDP sobre wifi se pierde.
+
 ## Arquitectura
 
 ```
