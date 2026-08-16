@@ -23,15 +23,14 @@ OBSERVED = [
 # cambio de no quedarse sin datos; por encima se reproduce más rápido hasta
 # reabsorberlo, con el mismo esquema que el control de velocidad para directos
 # de ExoPlayer.
-LIVE_BUFFER_OBJETIVO = 0.35   # segundos de atraso que se toleran
-LIVE_SPEED_MAX = 1.03         # techo de velocidad; más ya se nota
-LIVE_GANANCIA = 0.08          # cuánto se acelera por segundo de exceso
+LIVE_BUFFER_OBJETIVO = 0.20   # segundos de atraso que se toleran
+LIVE_SPEED_MAX = 1.05         # techo de velocidad; con corrección de tono no se oye
+LIVE_GANANCIA = 0.18          # cuánto se acelera por segundo de exceso
 LIVE_REGULA_CADA = 1.0        # cada cuánto se revisa
 LIVE_READAHEAD = 5            # lectura por delante: saca el atraso del socket
-# Por encima de este atraso no se espera a reabsorberlo poco a poco —a 1,03
-# harían falta más de dos minutos para recuperar dos segundos— y se salta
+# Por encima de este atraso no se espera a reabsorberlo poco a poco y se salta
 # directamente a lo último recibido, como el `maxOffsetMs` de ExoPlayer.
-LIVE_SALTO = 1.5
+LIVE_SALTO = 0.9
 
 # Propiedades que toca el modo de baja latencia; se guardan al arrancar mpv
 # para poder restaurar el comportamiento normal al volver a un vídeo VOD.
