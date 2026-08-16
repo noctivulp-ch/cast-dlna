@@ -127,7 +127,11 @@ cortes por falta de búfer.
 `untimed` se retira en cuanto aparece la pista de audio: en un MPEG-TS no
 figura en el `track-list` hasta que llega su primer paquete, casi siempre
 después de `file-loaded`, así que decidirlo solo ahí lo dejaba puesto sobre
-streams que sí tenían audio.
+streams que sí tenían audio —con 1,8 s de desfase medidos en un cast real—.
+La condición se lleva en una bandera propia y no en el estado observado de
+mpv, porque el aviso de `track-list` suele adelantar al de `untimed` y
+consultarlo dejaba el modo puesto para siempre. `scripts/test-untimed.py`
+reproduce ese orden.
 
 Repartiendo la latencia de un compartir pantalla medida en esta máquina: el
 demuxer del receptor retiene 33 ms y la red aporta ~4 ms de ida y vuelta. Lo

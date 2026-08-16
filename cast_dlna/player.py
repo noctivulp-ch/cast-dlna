@@ -46,6 +46,7 @@ class MpvPlayer:
         self._transitioning = False
         self._live = False
         self._image = False
+        self._untimed_forzado = False
         self._low_latency = False
         self._vod_defaults = {}
         threading.Thread(target=self._supervisor, daemon=True).start()
@@ -227,6 +228,7 @@ class MpvPlayer:
             for prop, value in self._vod_defaults.items():
                 self.set_property(prop, value)
             self.set_property("untimed", False)
+            self._untimed_forzado = False
         self._low_latency = enabled
         self.cfg.log(f"[mpv] baja latencia {'activada' if enabled else 'desactivada'}")
 
@@ -241,6 +243,7 @@ class MpvPlayer:
         tracks = self._props.get("track-list") or []
         if not any(t.get("type") == "audio" for t in tracks):
             self.set_property("untimed", True)
+            self._untimed_forzado = True
             self.cfg.log("[mpv] stream sin audio → untimed (latencia mínima)")
 
     def _revisar_untimed(self, tracks):
@@ -249,11 +252,15 @@ class MpvPlayer:
         allí, `untimed` acaba puesto sobre un stream que sí tiene audio: mpv
         deja de regirse por el reloj de la pista y la sincronía queda al azar.
         Se retira en cuanto el audio aparece."""
-        if not self._props.get("untimed"):
+        # La condición se lleva en una bandera propia, no en el estado
+        # observado: el aviso de `track-list` con la pista de audio suele
+        # adelantar al de `untimed`, y consultar ese estado dejaba el modo
+        # puesto para siempre sobre un stream que sí tenía audio.
+        if not self._untimed_forzado:
             return
         if any(t.get("type") == "audio" for t in (tracks or [])):
             self.set_property("untimed", False)
-            self._props["untimed"] = False
+            self._untimed_forzado = False
             self.cfg.log("[mpv] apareció pista de audio → untimed desactivado")
 
     # ── API de reproducción ────────────────────────────────────────────────
@@ -265,6 +272,7 @@ class MpvPlayer:
             self._pending_start = start
             self._live = live
             self._image = image
+            self._untimed_forzado = False
             # Una imagen dura `image-display-duration` (5 s por defecto) y
             # después mpv vuelve a idle y la ventana se cierra. Un cast de una
             # foto tiene que quedarse hasta que el controlador mande otra cosa.
