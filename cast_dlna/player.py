@@ -23,15 +23,20 @@ OBSERVED = [
 # cambio de no quedarse sin datos; por encima se reproduce más rápido hasta
 # reabsorberlo, con el mismo esquema que el control de velocidad para directos
 # de ExoPlayer.
-LIVE_BUFFER_OBJETIVO = 0.20   # segundos de atraso que se toleran
+# El colchón objetivo no es cero a propósito: vaciarlo deja al reproductor sin
+# datos en cuanto la red o el emisor dan un tirón, y un corte de audio suena
+# mucho peor que medio segundo de retraso.
+LIVE_BUFFER_OBJETIVO = 0.55   # colchón que se intenta mantener
+LIVE_BUFFER_MINIMO = 0.30     # por debajo se deja de acelerar y se recupera
 LIVE_SPEED_MAX = 1.04         # techo de velocidad
+LIVE_SPEED_MIN = 0.97         # suelo, para rehacer colchón sin que se note
 LIVE_ESCALA = 0.5             # exceso, en segundos, que lleva al techo
 LIVE_RAMPA = 0.003            # cuánto puede cambiar la velocidad por vuelta
 LIVE_REGULA_CADA = 0.5        # cada cuánto se revisa
 LIVE_READAHEAD = 5            # lectura por delante: saca el atraso del socket
 # Por encima de este atraso no se espera a reabsorberlo poco a poco y se salta
 # directamente a lo último recibido, como el `maxOffsetMs` de ExoPlayer.
-LIVE_SALTO = 0.9
+LIVE_SALTO = 1.2
 
 # Propiedades que toca el modo de baja latencia; se guardan al arrancar mpv
 # para poder restaurar el comportamiento normal al volver a un vídeo VOD.
@@ -272,6 +277,13 @@ class MpvPlayer:
         Una recta acelera de golpe justo al cruzar el objetivo, que es donde
         más se nota.
         """
+        if buffer_segundos < LIVE_BUFFER_MINIMO:
+            # Sin colchón, el reproductor se queda seco: el audio se entrecorta
+            # y la imagen se va. Se frena para rehacerlo, tanto más cuanto más
+            # vacío esté, y con la misma curva suave que del otro lado para que
+            # tampoco se note el momento en que empieza a frenar.
+            t = max(0.0, buffer_segundos) / LIVE_BUFFER_MINIMO
+            return LIVE_SPEED_MIN + (1.0 - LIVE_SPEED_MIN) * t * t * (3 - 2 * t)
         exceso = buffer_segundos - LIVE_BUFFER_OBJETIVO
         if exceso <= 0:
             return 1.0
@@ -303,7 +315,11 @@ class MpvPlayer:
             delta = objetivo - self._speed_directo
             if abs(delta) < 0.0005:
                 continue
-            if abs(delta) > LIVE_RAMPA:
+            # La rampa suaviza la corrección, pero quedarse sin colchón es una
+            # urgencia: ahí se frena de una vez en lugar de ir bajando poco a
+            # poco mientras el reproductor se queda seco.
+            urgente = buffer < LIVE_BUFFER_MINIMO
+            if not urgente and abs(delta) > LIVE_RAMPA:
                 objetivo = self._speed_directo + (LIVE_RAMPA if delta > 0 else -LIVE_RAMPA)
             self.set_property("speed", round(objetivo, 4))
             self._speed_directo = objetivo

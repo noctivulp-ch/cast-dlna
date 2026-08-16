@@ -148,11 +148,18 @@ mientras la latencia crecía.
 El receptor mantiene ahora una caché con lectura por delante, para que el
 atraso sea visible, y un regulador que lo reabsorbe:
 
-| Atraso | Qué hace |
+| Colchón | Qué hace |
 |---|---|
-| ≤ 0,20 s | nada, velocidad normal |
-| 0,20–0,90 s | reproduce hasta un 4 % más rápido hasta recuperarlo |
-| > 0,90 s | salta a lo último recibido |
+| < 0,30 s | frena hasta un 3 % para rehacerlo |
+| 0,30–0,55 s | nada, velocidad normal |
+| 0,55–1,20 s | acelera hasta un 4 % hasta recuperarlo |
+| > 1,20 s | salta a lo último recibido |
+
+El colchón objetivo no es cero a propósito. Vaciarlo deja al reproductor sin
+datos en cuanto la red o el emisor dan un tirón, y eso se paga en audio
+entrecortado, imagen desincronizada y un estado del que no se sale solo: mucho
+peor que medio segundo de retraso. Por eso el regulador frena cuando el
+colchón baja, no solo acelera cuando sube.
 
 Lo que decide si la corrección se nota no es el techo sino su forma. La curva
 es un *smoothstep*: sale del reposo y llega al techo con pendiente nula, de
