@@ -110,6 +110,38 @@ el retraso crece con el tiempo. Medido con `scripts/measure-live-latency.py`:
 `--no-live-latency` restaura el comportamiento de VOD si algún stream sufre
 cortes por falta de búfer.
 
+## Volumen
+
+Tres controles distintos se confunden con facilidad, y solo uno llega hasta
+aquí:
+
+| Control | Ruta | ¿Afecta al receptor? |
+|---|---|---|
+| Volumen multimedia del teléfono (botones físicos) | índice del dispositivo `speaker` | **No.** La captura de pantalla viaja por `remote_submix`, que tiene índice propio: con el altavoz a 0 sigue en 15/15 |
+| Volumen del audio dentro de un compartir pantalla | va incrustado en el MPEG-TS | Solo el nivel al que sonara en el emisor |
+| Volumen del cast (slider del controlador) | `RenderingControl::SetVolume` | **Sí** — es el único que mueve mpv |
+
+`--remote-volume` decide qué hacer con el tercero:
+
+| Modo | Comportamiento |
+|---|---|
+| `auto` *(default)* | Lo aplica salvo en compartir pantalla, donde se ignora |
+| `always` | Lo aplica siempre (DLNA estricto) |
+| `never` | Nunca lo aplica; el volumen se gestiona solo en este equipo |
+
+Compartir pantalla se reconoce por dos señales a la vez: MIME de directo
+(`video/mp2t`) **y** URI servida por la misma IP que manda el SOAP — el emisor
+sirviéndose a sí mismo. Por separado no bastan: IPTV en directo también es
+`mp2t` pero desde otro host, y Web Video Caster monta un proxy local que sirve
+mp4 desde el propio teléfono.
+
+Un `SetVolume` descartado se responde igualmente con `200 OK` —un fault haría
+que el controlador diera el renderer por roto— pero `GetVolume` sigue
+devolviendo el valor real de mpv, así que el slider del móvil salta de vuelta
+en lugar de mentir sobre el estado del reproductor.
+
+## Compatibilidad con controladores (cont.)
+
 **Subtítulos**: además de anunciar los MIME de subtítulo al principio del
 `Sink` de `GetProtocolInfo`, el `device.xml` declara `sec:ProductCap` /
 `sec:X_ProductCap` (marcador de capacidades de Samsung). Los controladores que
@@ -171,6 +203,14 @@ caso sin el móvil.
 `scripts/measure-live-latency.py <puerto> <socket-mpv>` — castea ese stream y
 reporta el retraso retenido en el demuxer. Comparar con y sin
 `--no-live-latency`.
+
+`scripts/test-volume-policy.py` — levanta un receptor por cada modo de
+`--remote-volume` y comprueba los tres escenarios (compartir pantalla, directo
+ajeno, vídeo normal) contra lo esperado.
+
+`scripts/probe-capture-volume.sh <ip-móvil>` — mide el nivel del audio que
+llega en un compartir pantalla a distintos volúmenes del teléfono, para
+comprobar en tu dispositivo que la captura no depende de ellos.
 
 ## Dependencias
 

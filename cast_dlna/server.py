@@ -92,11 +92,15 @@ class UPnPHandler(BaseHTTPRequestHandler):
         self.cfg.debug(f"[soap] {service_name}.{action} {args}")
 
         renderer = self.server.renderer
-        dispatch = {"AVTransport": renderer.avt,
-                    "RenderingControl": renderer.rcs,
-                    "ConnectionManager": renderer.cms}[service_name]
         try:
-            values = dispatch(action, args)
+            if service_name == "AVTransport":
+                # La IP del controlador distingue el compartir pantalla —el
+                # emisor sirviéndose a sí mismo— de un cast de contenido ajeno.
+                values = renderer.avt(action, args, self.client_address[0])
+            elif service_name == "RenderingControl":
+                values = renderer.rcs(action, args)
+            else:
+                values = renderer.cms(action, args)
         except UPnPFault as exc:
             self._send(500, "text/xml; charset=\"utf-8\"",
                        soap.fault(exc.code, exc.description))

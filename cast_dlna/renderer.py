@@ -3,6 +3,7 @@ ConnectionManager sobre el backend mpv."""
 
 import threading
 import time
+import urllib.parse
 
 from . import device, didl, soap
 
@@ -22,6 +23,7 @@ class Renderer:
         self.media = didl.Media()
         self.play_mode = "NORMAL"
         self.status = "OK"
+        self.screen_share = False
         self._last_avt = {}
         self._last_rcs = {}
         threading.Thread(target=self._ticker, daemon=True).start()
@@ -99,7 +101,9 @@ class Renderer:
         return ",".join(dict.fromkeys(actions))
 
     # ── AVTransport ────────────────────────────────────────────────────────
-    def avt(self, action, args):
+    def avt(self, action, args, client_ip=None):
+        if action == "SetAVTransportURI":
+            self._client_ip = client_ip
         handler = getattr(self, "_avt_" + action, None)
         if handler is None:
             return None
@@ -123,6 +127,7 @@ class Renderer:
             self.uri_metadata = args.get("CurrentURIMetaData", "")
             self.media = media
             self.status = "OK"
+            self.screen_share = self._is_screen_share(uri, media)
 
         self.cfg.log(f"▶  {media.title or '(sin título)'}")
         self.cfg.log(f"   {uri[:110]}{'…' if len(uri) > 110 else ''}")
@@ -135,6 +140,24 @@ class Renderer:
                          title=media.title, live=media.live)
         self.on_player_change()
         return {}
+
+    def _is_screen_share(self, uri, media):
+        """Compartir pantalla es el controlador sirviéndose a sí mismo un
+        MPEG-TS en directo. Hacen falta las dos señales: por MIME sola se
+        confundiría con IPTV, y por origen sola con el proxy local que monta
+        Web Video Caster para servir un mp4 desde el propio teléfono."""
+        if not media.live:
+            return False
+        host = urllib.parse.urlparse(uri).hostname
+        return bool(host) and host == getattr(self, "_client_ip", None)
+
+    def _volume_is_remote(self):
+        mode = self.cfg.remote_volume
+        if mode == "always":
+            return True
+        if mode == "never":
+            return False
+        return not self.screen_share
 
     def _avt_SetNextAVTransportURI(self, args):
         uri = soap.unescape(args.get("NextURI", "")).strip()
@@ -303,15 +326,19 @@ class Renderer:
         if not 0 <= level <= 100:
             raise UPnPFault(601, "Argument Value Out of Range")
         # Rechazar la acción haría que el controlador diese el renderer por
-        # roto, así que se acepta y se descarta: el mando de volumen del móvil
-        # controla el reproductor de este equipo, que no siempre es lo que se
-        # quiere al castear.
-        if self.cfg.ignore_remote_volume:
-            self.cfg.log(f"🔇 SetVolume({level}) ignorado (--ignore-remote-volume)")
+        # roto, así que se acepta y se descarta. GetVolume sigue devolviendo el
+        # valor real de mpv: el slider del controlador saltará de vuelta, que
+        # es preferible a mentir sobre el estado del reproductor.
+        if not self._volume_is_remote():
+            self.cfg.log(f"🔇 SetVolume({level}) ignorado ({self._volume_reason()})")
             return {}
         self.player.set_volume(level)
         self.cfg.log(f"🔊 volumen → {level}")
         return {}
+
+    def _volume_reason(self):
+        return ("compartir pantalla" if self.screen_share
+                else f"--remote-volume {self.cfg.remote_volume}")
 
     def _rcs_GetVolumeDB(self, args):
         return {"CurrentVolume": _to_db(self.player.volume)}
@@ -332,8 +359,8 @@ class Renderer:
 
     def _rcs_SetMute(self, args):
         desired = (args.get("DesiredMute") or "0").strip().lower()
-        if self.cfg.ignore_remote_volume:
-            self.cfg.log(f"🔇 SetMute({desired}) ignorado (--ignore-remote-volume)")
+        if not self._volume_is_remote():
+            self.cfg.log(f"🔇 SetMute({desired}) ignorado ({self._volume_reason()})")
             return {}
         self.player.set_mute(desired in ("1", "true", "yes"))
         return {}
