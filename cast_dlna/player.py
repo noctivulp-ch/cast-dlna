@@ -14,8 +14,8 @@ import time
 
 OBSERVED = [
     "pause", "time-pos", "duration", "core-idle", "eof-reached",
-    "volume", "mute", "path", "media-title", "seekable",
-    "playlist-count", "playlist-pos", "idle-active", "speed",
+    "volume", "mute", "path", "media-title", "seekable", "untimed",
+    "playlist-count", "playlist-pos", "idle-active", "speed", "track-list",
 ]
 
 # Propiedades que toca el modo de baja latencia; se guardan al arrancar mpv
@@ -174,6 +174,8 @@ class MpvPlayer:
         event = msg.get("event")
         if event == "property-change":
             self._props[msg.get("name")] = msg.get("data")
+            if msg.get("name") == "track-list":
+                self._revisar_untimed(msg.get("data"))
             if msg.get("name") in ("pause", "core-idle", "idle-active",
                                    "duration", "volume", "mute", "path"):
                 self.on_change()
@@ -233,10 +235,26 @@ class MpvPlayer:
         desfase con los timestamps del emisor se acumula. `untimed` muestra
         cada cuadro en cuanto llega, que es lo que se quiere al compartir
         pantalla — y por eso solo se activa si de verdad no hay audio."""
-        tracks = self.get_property("track-list") or []
+        # Se lee del estado observado, nunca con get_property: esto corre en
+        # el hilo lector, y esperar ahí una respuesta que solo ese mismo hilo
+        # puede procesar lo bloquea hasta que vence el temporizador.
+        tracks = self._props.get("track-list") or []
         if not any(t.get("type") == "audio" for t in tracks):
             self.set_property("untimed", True)
             self.cfg.log("[mpv] stream sin audio → untimed (latencia mínima)")
+
+    def _revisar_untimed(self, tracks):
+        """En un MPEG-TS la pista de audio no aparece hasta que llega su
+        primer paquete, casi siempre después de `file-loaded`. Si se decidió
+        allí, `untimed` acaba puesto sobre un stream que sí tiene audio: mpv
+        deja de regirse por el reloj de la pista y la sincronía queda al azar.
+        Se retira en cuanto el audio aparece."""
+        if not self._props.get("untimed"):
+            return
+        if any(t.get("type") == "audio" for t in (tracks or [])):
+            self.set_property("untimed", False)
+            self._props["untimed"] = False
+            self.cfg.log("[mpv] apareció pista de audio → untimed desactivado")
 
     # ── API de reproducción ────────────────────────────────────────────────
     def load(self, uri, headers=None, subtitles=None, title=None,

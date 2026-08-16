@@ -124,6 +124,16 @@ el retraso crece con el tiempo. Medido con `scripts/measure-live-latency.py`:
 `--no-live-latency` restaura el comportamiento de VOD si algún stream sufre
 cortes por falta de búfer.
 
+`untimed` se retira en cuanto aparece la pista de audio: en un MPEG-TS no
+figura en el `track-list` hasta que llega su primer paquete, casi siempre
+después de `file-loaded`, así que decidirlo solo ahí lo dejaba puesto sobre
+streams que sí tenían audio.
+
+Repartiendo la latencia de un compartir pantalla medida en esta máquina: el
+demuxer del receptor retiene 33 ms y la red aporta ~4 ms de ida y vuelta. Lo
+que se perciba por encima de eso viene de la captura y el codificador del
+emisor.
+
 ## Volumen
 
 Tres controles distintos se confunden con facilidad, y solo uno llega hasta
