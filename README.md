@@ -151,12 +151,21 @@ atraso sea visible, y un regulador que lo reabsorbe:
 | Atraso | Qué hace |
 |---|---|
 | ≤ 0,20 s | nada, velocidad normal |
-| 0,20–0,90 s | reproduce hasta un 5 % más rápido hasta recuperarlo |
+| 0,20–0,90 s | reproduce hasta un 4 % más rápido hasta recuperarlo |
 | > 0,90 s | salta a lo último recibido |
 
-Los cuatro números viven juntos al principio de `player.py`. Subir
+Lo que decide si la corrección se nota no es el techo sino su forma. La curva
+es un *smoothstep*: sale del reposo y llega al techo con pendiente nula, de
+modo que ni el instante en que empieza a corregir ni aquel en que deja de
+hacerlo tienen una costura audible —una recta acelera de golpe justo al cruzar
+el objetivo, que es donde más se oye—. Además la velocidad se mueve por una
+rampa acotada, unos siete segundos del reposo al techo, en vez de saltar de
+un valor a otro.
+
+Los números viven juntos al principio de `player.py`. Subir
 `LIVE_BUFFER_OBJETIVO` da más colchón frente a hipos de red a cambio de más
-retraso; bajar `LIVE_SPEED_MAX` hace la corrección más suave y más lenta.
+retraso; bajar `LIVE_SPEED_MAX` o `LIVE_RAMPA` hace la corrección más
+disimulada y más lenta.
 
 Es el mismo esquema del control de velocidad para directos de ExoPlayer
 (`targetOffsetMs`, `maxPlaybackSpeed`, `maxOffsetMs`), que es justo lo que la

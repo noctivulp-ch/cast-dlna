@@ -24,9 +24,10 @@ OBSERVED = [
 # reabsorberlo, con el mismo esquema que el control de velocidad para directos
 # de ExoPlayer.
 LIVE_BUFFER_OBJETIVO = 0.20   # segundos de atraso que se toleran
-LIVE_SPEED_MAX = 1.05         # techo de velocidad; con corrección de tono no se oye
-LIVE_GANANCIA = 0.18          # cuánto se acelera por segundo de exceso
-LIVE_REGULA_CADA = 1.0        # cada cuánto se revisa
+LIVE_SPEED_MAX = 1.04         # techo de velocidad
+LIVE_ESCALA = 0.5             # exceso, en segundos, que lleva al techo
+LIVE_RAMPA = 0.003            # cuánto puede cambiar la velocidad por vuelta
+LIVE_REGULA_CADA = 0.5        # cada cuánto se revisa
 LIVE_READAHEAD = 5            # lectura por delante: saca el atraso del socket
 # Por encima de este atraso no se espera a reabsorberlo poco a poco y se salta
 # directamente a lo último recibido, como el `maxOffsetMs` de ExoPlayer.
@@ -261,15 +262,21 @@ class MpvPlayer:
     def velocidad_para(self, buffer_segundos):
         """Velocidad de reproducción que corresponde a un atraso dado.
 
-        Mismo principio que el `LivePlaybackSpeedControl` de ExoPlayer, que
-        es lo que usará la versión de Android TV: en vez de dar saltos, se
-        reproduce un poco más rápido hasta volver al retraso objetivo. Con la
-        corrección de tono de mpv, un 3 % no se oye.
+        Mismo principio que el `LivePlaybackSpeedControl` de ExoPlayer, que es
+        lo que usará la versión de Android TV: en vez de dar saltos, se
+        reproduce un poco más rápido hasta volver al retraso objetivo.
+
+        La curva es un smoothstep, no una recta: sale del reposo y llega al
+        techo con pendiente nula, así que ni el momento en que empieza a
+        corregir ni aquel en que deja de hacerlo tienen una costura audible.
+        Una recta acelera de golpe justo al cruzar el objetivo, que es donde
+        más se nota.
         """
         exceso = buffer_segundos - LIVE_BUFFER_OBJETIVO
         if exceso <= 0:
             return 1.0
-        return min(LIVE_SPEED_MAX, 1.0 + exceso * LIVE_GANANCIA)
+        t = min(1.0, exceso / LIVE_ESCALA)
+        return 1.0 + (LIVE_SPEED_MAX - 1.0) * t * t * (3 - 2 * t)
 
     def _regular_directo(self):
         while self._running:
@@ -291,11 +298,16 @@ class MpvPlayer:
                 continue
 
             objetivo = self.velocidad_para(buffer)
-            if abs(objetivo - self._speed_directo) < 0.002:
+            # Se llega al valor por una rampa, no de un salto: pasar de golpe
+            # de la velocidad normal a la corregida se oye como un tirón.
+            delta = objetivo - self._speed_directo
+            if abs(delta) < 0.0005:
                 continue
-            self.set_property("speed", round(objetivo, 3))
+            if abs(delta) > LIVE_RAMPA:
+                objetivo = self._speed_directo + (LIVE_RAMPA if delta > 0 else -LIVE_RAMPA)
+            self.set_property("speed", round(objetivo, 4))
             self._speed_directo = objetivo
-            self.cfg.debug(f"[mpv] atraso {float(buffer):.2f}s → velocidad {objetivo:.3f}")
+            self.cfg.debug(f"[mpv] atraso {buffer:.2f}s → velocidad {objetivo:.4f}")
 
     def _apply_untimed_if_silent(self):
         """Sin pista de audio mpv no tiene reloj al que engancharse y el
