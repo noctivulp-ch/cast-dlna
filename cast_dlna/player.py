@@ -23,23 +23,15 @@ OBSERVED = [
 # cambio de no quedarse sin datos; por encima se reproduce más rápido hasta
 # reabsorberlo, con el mismo esquema que el control de velocidad para directos
 # de ExoPlayer.
-# El colchón objetivo no es cero a propósito: vaciarlo deja al reproductor sin
-# datos en cuanto la red o el emisor dan un tirón, y un corte de audio suena
-# mucho peor que medio segundo de retraso.
-LIVE_BUFFER_OBJETIVO = 0.55   # colchón que se intenta mantener
-LIVE_BUFFER_MINIMO = 0.30     # por debajo se deja de acelerar y se recupera
-LIVE_SPEED_MAX = 1.04         # techo de velocidad
-LIVE_SPEED_MIN = 0.97         # suelo, para rehacer colchón sin que se note
-LIVE_ESCALA = 0.5             # exceso, en segundos, que lleva al techo
-LIVE_SUAVIZADO = 0.03         # peso de cada lectura en la media del colchón
-LIVE_RAMPA = 0.008            # tope de cambio de velocidad por vuelta
-LIVE_REGULA_CADA = 0.5        # cada cuánto se revisa
+LIVE_BUFFER_OBJETIVO = 0.35   # segundos de atraso que se toleran
+LIVE_SPEED_MAX = 1.03         # techo de velocidad; más ya se nota
+LIVE_GANANCIA = 0.08          # cuánto se acelera por segundo de exceso
+LIVE_REGULA_CADA = 1.0        # cada cuánto se revisa
 LIVE_READAHEAD = 5            # lectura por delante: saca el atraso del socket
-# Saltar a lo último recibido vacía el búfer de golpe —el seek hace flush del
-# demuxer, no avanza dentro de lo ya leído—, y con el búfer seco el sonido se
-# rompe. Queda solo como último recurso ante un atraso enorme y sostenido, no
-# como herramienta de ajuste fino.
-LIVE_SALTO = 3.0
+# Por encima de este atraso no se espera a reabsorberlo poco a poco —a 1,03
+# harían falta más de dos minutos para recuperar dos segundos— y se salta
+# directamente a lo último recibido, como el `maxOffsetMs` de ExoPlayer.
+LIVE_SALTO = 1.5
 
 # Propiedades que toca el modo de baja latencia; se guardan al arrancar mpv
 # para poder restaurar el comportamiento normal al volver a un vídeo VOD.
@@ -72,7 +64,6 @@ class MpvPlayer:
         self._untimed_forzado = False
         self._low_latency = False
         self._speed_directo = 1.0
-        self._colchon_medio = None
         self._vod_defaults = {}
         threading.Thread(target=self._supervisor, daemon=True).start()
         threading.Thread(target=self._regular_directo, daemon=True).start()
@@ -271,28 +262,15 @@ class MpvPlayer:
     def velocidad_para(self, buffer_segundos):
         """Velocidad de reproducción que corresponde a un atraso dado.
 
-        Mismo principio que el `LivePlaybackSpeedControl` de ExoPlayer, que es
-        lo que usará la versión de Android TV: en vez de dar saltos, se
-        reproduce un poco más rápido hasta volver al retraso objetivo.
-
-        La curva es un smoothstep, no una recta: sale del reposo y llega al
-        techo con pendiente nula, así que ni el momento en que empieza a
-        corregir ni aquel en que deja de hacerlo tienen una costura audible.
-        Una recta acelera de golpe justo al cruzar el objetivo, que es donde
-        más se nota.
+        Mismo principio que el `LivePlaybackSpeedControl` de ExoPlayer, que
+        es lo que usará la versión de Android TV: en vez de dar saltos, se
+        reproduce un poco más rápido hasta volver al retraso objetivo. Con la
+        corrección de tono de mpv, un 3 % no se oye.
         """
-        if buffer_segundos < LIVE_BUFFER_MINIMO:
-            # Sin colchón, el reproductor se queda seco: el audio se entrecorta
-            # y la imagen se va. Se frena para rehacerlo, tanto más cuanto más
-            # vacío esté, y con la misma curva suave que del otro lado para que
-            # tampoco se note el momento en que empieza a frenar.
-            t = max(0.0, buffer_segundos) / LIVE_BUFFER_MINIMO
-            return LIVE_SPEED_MIN + (1.0 - LIVE_SPEED_MIN) * t * t * (3 - 2 * t)
         exceso = buffer_segundos - LIVE_BUFFER_OBJETIVO
         if exceso <= 0:
             return 1.0
-        t = min(1.0, exceso / LIVE_ESCALA)
-        return 1.0 + (LIVE_SPEED_MAX - 1.0) * t * t * (3 - 2 * t)
+        return min(LIVE_SPEED_MAX, 1.0 + exceso * LIVE_GANANCIA)
 
     def _regular_directo(self):
         while self._running:
@@ -302,16 +280,7 @@ class MpvPlayer:
             buffer = self._props.get("demuxer-cache-duration")
             if buffer is None:
                 continue
-            # El colchón instantáneo es puro ruido: el emisor entrega a
-            # ráfagas y una sola lectura pasa de 0,0 a 1,1 s entre vueltas.
-            # Corregir sobre ese valor persigue el ruido y hace oscilar el
-            # sistema; se regula sobre la media, como hace scrcpy.
-            actual = float(buffer)
-            if self._colchon_medio is None:
-                self._colchon_medio = actual
-            else:
-                self._colchon_medio += (actual - self._colchon_medio) * LIVE_SUAVIZADO
-            buffer = self._colchon_medio
+            buffer = float(buffer)
 
             if buffer > LIVE_SALTO:
                 salto = buffer - LIVE_BUFFER_OBJETIVO
@@ -323,21 +292,11 @@ class MpvPlayer:
                 continue
 
             objetivo = self.velocidad_para(buffer)
-            # Se llega al valor por una rampa, no de un salto: pasar de golpe
-            # de la velocidad normal a la corregida se oye como un tirón.
-            delta = objetivo - self._speed_directo
-            if abs(delta) < 0.0005:
+            if abs(objetivo - self._speed_directo) < 0.002:
                 continue
-            # Tope holgado, solo para recortar un pico suelto. La versión
-            # anterior lo tenía tan apretado que la velocidad tardaba diez
-            # segundos en cruzar su rango: se veía frenando con el búfer lleno
-            # porque seguía viniendo de un mínimo anterior, y el lazo oscilaba.
-            if abs(delta) > LIVE_RAMPA:
-                objetivo = self._speed_directo + (LIVE_RAMPA if delta > 0 else -LIVE_RAMPA)
-            self.set_property("speed", round(objetivo, 4))
+            self.set_property("speed", round(objetivo, 3))
             self._speed_directo = objetivo
-            self.cfg.debug(f"[mpv] colchón {actual:.2f}s (media {buffer:.2f}s)"
-                           f" → velocidad {objetivo:.4f}")
+            self.cfg.debug(f"[mpv] atraso {float(buffer):.2f}s → velocidad {objetivo:.3f}")
 
     def _apply_untimed_if_silent(self):
         """Sin pista de audio mpv no tiene reloj al que engancharse y el
@@ -381,7 +340,6 @@ class MpvPlayer:
             self._image = image
             self._untimed_forzado = False
             self._speed_directo = 1.0
-            self._colchon_medio = None
             # Una imagen dura `image-display-duration` (5 s por defecto) y
             # después mpv vuelve a idle y la ventana se cierra. Un cast de una
             # foto tiene que quedarse hasta que el controlador mande otra cosa.
