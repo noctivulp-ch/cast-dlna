@@ -77,6 +77,20 @@ Se detectan por las cuatro vías que usan los controladores, en este orden:
 
 Se cargan con `sub-add` una vez mpv abre el archivo, y quedan seleccionados.
 
+### Imágenes
+
+Un cast de una foto tiene que quedarse en pantalla hasta que el controlador
+mande otra cosa, pero mpv descarta las imágenes a los `image-display-duration`
+segundos —5 por defecto— y con `keep-open=no` vuelve a idle: la foto aparecía
+unos instantes y desaparecía.
+
+Al reconocer contenido de imagen —por `upnp:class` con `imageItem`, por MIME
+`image/*` o por la extensión de la URI— se pone `image-display-duration=inf`,
+y se restaura el valor normal en el siguiente cast. El estado se reporta como
+`PLAYING` mientras la imagen está en pantalla: una imagen fija deja a mpv en
+`core-idle`, y sin ese caso el controlador se quedaría en «cargando» para
+siempre.
+
 ### Cabeceras HTTP
 
 `Referer`, `User-Agent`, `Cookie` y `Authorization` se propagan a mpv

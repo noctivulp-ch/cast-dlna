@@ -137,7 +137,7 @@ class Renderer:
             self.cfg.debug(f"   hdrs: {media.headers}")
 
         self.player.load(uri, headers=media.headers, subtitles=media.subtitles,
-                         title=media.title, live=media.live)
+                         title=media.title, live=media.live, image=media.is_image)
         self.on_player_change()
         return {}
 
@@ -233,7 +233,8 @@ class Renderer:
         if self.player.transport_state in ("STOPPED", "NO_MEDIA_PRESENT") and self.uri:
             self.player.load(self.uri, headers=self.media.headers,
                              subtitles=self.media.subtitles,
-                             title=self.media.title, live=self.media.live)
+                             title=self.media.title, live=self.media.live,
+                             image=self.media.is_image)
         else:
             self.player.play()
         self.cfg.log("▶  play")

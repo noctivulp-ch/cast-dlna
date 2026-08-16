@@ -45,6 +45,7 @@ class MpvPlayer:
         self._running = True
         self._transitioning = False
         self._live = False
+        self._image = False
         self._low_latency = False
         self._vod_defaults = {}
         threading.Thread(target=self._supervisor, daemon=True).start()
@@ -96,6 +97,7 @@ class MpvPlayer:
         for i, prop in enumerate(OBSERVED, start=1):
             self._send({"command": ["observe_property", i, prop]})
         self._low_latency = False
+        self._image_duration_default = self.get_property("image-display-duration") or 5
         self._snapshot_latency_defaults()
 
     # ── Transporte IPC ─────────────────────────────────────────────────────
@@ -238,12 +240,18 @@ class MpvPlayer:
 
     # ── API de reproducción ────────────────────────────────────────────────
     def load(self, uri, headers=None, subtitles=None, title=None,
-             append=False, start=0.0, live=False):
+             append=False, start=0.0, live=False, image=False):
         if not append:
             self._transitioning = True
             self._pending_subs = list(subtitles or [])
             self._pending_start = start
             self._live = live
+            self._image = image
+            # Una imagen dura `image-display-duration` (5 s por defecto) y
+            # después mpv vuelve a idle y la ventana se cierra. Un cast de una
+            # foto tiene que quedarse hasta que el controlador mande otra cosa.
+            self.set_property("image-display-duration",
+                              "inf" if image else self._image_duration_default)
             self.set_low_latency(live and self.cfg.live_latency)
             self._apply_headers(headers or {})
             if title:
@@ -355,6 +363,8 @@ class MpvPlayer:
             return "STOPPED" if self._stopped else "NO_MEDIA_PRESENT"
         if self._props.get("pause"):
             return "PAUSED_PLAYBACK"
+        if self._image:
+            return "PLAYING"
         if self._props.get("core-idle"):
             return "TRANSITIONING"
         return "PLAYING"

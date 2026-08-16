@@ -18,6 +18,8 @@ SUB_MIMES = ("text/srt", "text/vtt", "text/plain", "application/x-subrip",
 
 SUB_EXTS = (".srt", ".vtt", ".ass", ".ssa", ".sub", ".smi", ".ttml", ".dfxp")
 
+IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".tiff", ".heic")
+
 FORWARDED_HEADERS = ("referer", "referrer", "user-agent", "cookie",
                      "authorization", "origin", "x-forwarded-for")
 
@@ -66,12 +68,13 @@ class Media:
         self.headers = {}
         self.mime = ""
         self.live = False
+        self.is_image = False
         self.raw = ""
 
     def __repr__(self):
         return (f"Media(title={self.title!r}, dur={self.duration}, "
                 f"subs={len(self.subtitles)}, headers={list(self.headers)}, "
-                f"live={self.live})")
+                f"live={self.live}, image={self.is_image})")
 
 
 def parse_metadata(raw, uri=""):
@@ -95,6 +98,8 @@ def parse_metadata(raw, uri=""):
 
         if name == "title" and text and not media.title:
             media.title = text
+        elif name == "class" and "imageitem" in text.lower():
+            media.is_image = True
         elif name in ("captioninfo", "captioninfoex") and text:
             media.subtitles.append((text, _attr(elem, "type") or ""))
         elif name == "subtitlefileuri" and text:
@@ -115,6 +120,9 @@ def parse_metadata(raw, uri=""):
 
     _dedup_subs(media)
     _headers_from_uri(uri, media)
+    if media.mime.startswith("image/") or \
+            uri.lower().split("?")[0].endswith(IMAGE_EXTS):
+        media.is_image = True
     return media
 
 

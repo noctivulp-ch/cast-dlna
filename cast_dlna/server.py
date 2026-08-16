@@ -32,6 +32,18 @@ class UPnPHandler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         self.cfg.debug("[http] " + fmt % args)
 
+    def log_error(self, fmt, *args):
+        mensaje = fmt % args
+        if "HTTP/0.9" in mensaje:
+            # Los controladores rastrean la red buscando receptores de otros
+            # protocolos —CastLab prueba FCast, que empieza con una longitud
+            # binaria y un {"version":N}—. No es un error del renderer: se
+            # rechaza la conexión y no afecta al cast por DLNA.
+            self.cfg.debug("[http] conexión que no habla HTTP, ignorada "
+                           "(sondeo de otro protocolo)")
+            return
+        self.cfg.debug("[http] " + mensaje)
+
     def _send(self, code, ctype, body=b"", extra=None):
         if isinstance(body, str):
             body = body.encode("utf-8")
