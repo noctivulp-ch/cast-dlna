@@ -16,7 +16,22 @@ OBSERVED = [
     "pause", "time-pos", "duration", "core-idle", "eof-reached",
     "volume", "mute", "path", "media-title", "seekable", "untimed",
     "playlist-count", "playlist-pos", "idle-active", "speed", "track-list",
+    "demuxer-cache-duration",
 ]
+
+# Regulación del retraso en directo. El objetivo es el atraso que se acepta a
+# cambio de no quedarse sin datos; por encima se reproduce más rápido hasta
+# reabsorberlo, con el mismo esquema que el control de velocidad para directos
+# de ExoPlayer.
+LIVE_BUFFER_OBJETIVO = 0.35   # segundos de atraso que se toleran
+LIVE_SPEED_MAX = 1.03         # techo de velocidad; más ya se nota
+LIVE_GANANCIA = 0.08          # cuánto se acelera por segundo de exceso
+LIVE_REGULA_CADA = 1.0        # cada cuánto se revisa
+LIVE_READAHEAD = 5            # lectura por delante: saca el atraso del socket
+# Por encima de este atraso no se espera a reabsorberlo poco a poco —a 1,03
+# harían falta más de dos minutos para recuperar dos segundos— y se salta
+# directamente a lo último recibido, como el `maxOffsetMs` de ExoPlayer.
+LIVE_SALTO = 1.5
 
 # Propiedades que toca el modo de baja latencia; se guardan al arrancar mpv
 # para poder restaurar el comportamiento normal al volver a un vídeo VOD.
@@ -48,8 +63,10 @@ class MpvPlayer:
         self._image = False
         self._untimed_forzado = False
         self._low_latency = False
+        self._speed_directo = 1.0
         self._vod_defaults = {}
         threading.Thread(target=self._supervisor, daemon=True).start()
+        threading.Thread(target=self._regular_directo, daemon=True).start()
 
     # ── Ciclo de vida del proceso ──────────────────────────────────────────
     def _spawn(self):
@@ -214,23 +231,72 @@ class MpvPlayer:
                 self._vod_defaults[prop] = value
 
     def set_low_latency(self, enabled):
-        """El perfil low-latency de mpv desactiva cache y readahead y recorta
-        el análisis del demuxer. En VOD costaría robustez, pero en un stream
-        en directo esos búferes son puro retraso acumulado."""
+        """El perfil low-latency de mpv recorta el análisis del demuxer y los
+        búferes de salida, que en un directo son puro retraso.
+
+        Lo que no se hereda del perfil es su `cache=no`. Sin caché el retraso
+        que se acumula por la diferencia entre el reloj del emisor y el de
+        este equipo no desaparece: se queda en el búfer del socket, donde no
+        se puede ni medir ni drenar, y crece sin techo. Con caché el atraso se
+        hace visible en `demuxer-cache-duration` y [_regular_directo] puede
+        reabsorberlo.
+        """
         if enabled == self._low_latency:
             return
         if enabled:
             self.command("apply-profile", "low-latency")
-            self.set_property("cache", "no")
-            self.set_property("demuxer-readahead-secs", 0)
-            self.set_property("cache-secs", 0)
+            self.set_property("cache", "yes")
+            self.set_property("demuxer-readahead-secs", LIVE_READAHEAD)
+            self.set_property("cache-secs", LIVE_READAHEAD)
         else:
             for prop, value in self._vod_defaults.items():
                 self.set_property(prop, value)
             self.set_property("untimed", False)
             self._untimed_forzado = False
+            self.set_property("speed", 1.0)
+            self._speed_directo = 1.0
         self._low_latency = enabled
         self.cfg.log(f"[mpv] baja latencia {'activada' if enabled else 'desactivada'}")
+
+    # ── Regulador de retraso en directo ────────────────────────────────────
+    def velocidad_para(self, buffer_segundos):
+        """Velocidad de reproducción que corresponde a un atraso dado.
+
+        Mismo principio que el `LivePlaybackSpeedControl` de ExoPlayer, que
+        es lo que usará la versión de Android TV: en vez de dar saltos, se
+        reproduce un poco más rápido hasta volver al retraso objetivo. Con la
+        corrección de tono de mpv, un 3 % no se oye.
+        """
+        exceso = buffer_segundos - LIVE_BUFFER_OBJETIVO
+        if exceso <= 0:
+            return 1.0
+        return min(LIVE_SPEED_MAX, 1.0 + exceso * LIVE_GANANCIA)
+
+    def _regular_directo(self):
+        while self._running:
+            time.sleep(LIVE_REGULA_CADA)
+            if not (self._live and self.cfg.live_latency and self._has_media):
+                continue
+            buffer = self._props.get("demuxer-cache-duration")
+            if buffer is None:
+                continue
+            buffer = float(buffer)
+
+            if buffer > LIVE_SALTO:
+                salto = buffer - LIVE_BUFFER_OBJETIVO
+                self.command("seek", round(salto, 2), "relative")
+                if self._speed_directo != 1.0:
+                    self.set_property("speed", 1.0)
+                    self._speed_directo = 1.0
+                self.cfg.log(f"[mpv] atraso de {buffer:.2f}s → salto al directo")
+                continue
+
+            objetivo = self.velocidad_para(buffer)
+            if abs(objetivo - self._speed_directo) < 0.002:
+                continue
+            self.set_property("speed", round(objetivo, 3))
+            self._speed_directo = objetivo
+            self.cfg.debug(f"[mpv] atraso {float(buffer):.2f}s → velocidad {objetivo:.3f}")
 
     def _apply_untimed_if_silent(self):
         """Sin pista de audio mpv no tiene reloj al que engancharse y el
@@ -273,6 +339,7 @@ class MpvPlayer:
             self._live = live
             self._image = image
             self._untimed_forzado = False
+            self._speed_directo = 1.0
             # Una imagen dura `image-display-duration` (5 s por defecto) y
             # después mpv vuelve a idle y la ventana se cierra. Un cast de una
             # foto tiene que quedarse hasta que el controlador mande otra cosa.

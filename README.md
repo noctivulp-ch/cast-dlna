@@ -133,10 +133,36 @@ mpv, porque el aviso de `track-list` suele adelantar al de `untimed` y
 consultarlo dejaba el modo puesto para siempre. `scripts/test-untimed.py`
 reproduce ese orden.
 
-Repartiendo la latencia de un compartir pantalla medida en esta máquina: el
-demuxer del receptor retiene 33 ms y la red aporta ~4 ms de ida y vuelta. Lo
-que se perciba por encima de eso viene de la captura y el codificador del
-emisor.
+### El retraso que se acumula en un directo
+
+Los relojes del emisor y del receptor nunca coinciden del todo, así que en un
+directo el desfase crece sin techo salvo que alguien lo reabsorba. Medido de
+punta a punta con `scripts/measure-total-latency.sh`: 0,5 s a los pocos
+segundos y 2,0 s cincuenta segundos después.
+
+Poner `cache=no` —lo que hace el perfil `low-latency`— no lo evita: solo
+esconde el atraso, que pasa a acumularse en el búfer del socket, donde no se
+puede ni medir ni drenar. Por eso `demuxer-cache-duration` marcaba 0,0
+mientras la latencia crecía.
+
+El receptor mantiene ahora una caché con lectura por delante, para que el
+atraso sea visible, y un regulador que lo reabsorbe:
+
+| Atraso | Qué hace |
+|---|---|
+| ≤ 0,35 s | nada, velocidad normal |
+| 0,35–1,5 s | reproduce hasta un 3 % más rápido hasta recuperarlo |
+| > 1,5 s | salta a lo último recibido |
+
+Es el mismo esquema del control de velocidad para directos de ExoPlayer
+(`targetOffsetMs`, `maxPlaybackSpeed`, `maxOffsetMs`), que es justo lo que la
+versión de Android TV tendrá de fábrica. Con la corrección de tono de mpv, un
+3 % no se oye. `scripts/test-live-regulator.py` comprueba la curva y la
+convergencia.
+
+Repartiendo la latencia de un compartir pantalla medida en esta máquina: la
+captura, la codificación y la red suman 53–113 ms, el demuxer del receptor
+retiene unas décimas y la red aporta ~4 ms de ida y vuelta.
 
 ## Volumen
 
