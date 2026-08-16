@@ -117,7 +117,11 @@ class Renderer:
             return {}
 
         media = didl.parse_metadata(raw_meta, uri)
-        if not media.subtitles:
+        # El sondeo de `CaptionInfo.sec` no se hace sobre un directo: abriría
+        # una segunda conexión al emisor, que la cuenta como un espectador más
+        # y le empieza a enviar el stream. Un directo tampoco trae subtítulos
+        # por esa vía.
+        if not media.subtitles and not media.live:
             caption = didl.probe_caption_header(uri)
             if caption:
                 media.subtitles.append((caption, ""))
