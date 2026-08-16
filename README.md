@@ -153,7 +153,13 @@ atraso sea visible, y un regulador que lo reabsorbe:
 | < 0,30 s | frena hasta un 3 % para rehacerlo |
 | 0,30–0,55 s | nada, velocidad normal |
 | 0,55–1,20 s | acelera hasta un 4 % hasta recuperarlo |
-| > 1,20 s | salta a lo último recibido |
+| > 3,00 s | salta a lo último recibido, como último recurso |
+
+Saltar vacía el búfer de golpe: el `seek` hace *flush* del demuxer en vez de
+avanzar dentro de lo ya leído, y con el búfer seco el sonido se rompe. Con el
+umbral bajo servía de herramienta de ajuste y provocaba justo lo que debía
+evitar —salto, búfer a cero, frenada al suelo, otro salto—, así que queda solo
+para un atraso enorme y sostenido.
 
 El colchón objetivo no es cero a propósito. Vaciarlo deja al reproductor sin
 datos en cuanto la red o el emisor dan un tirón, y eso se paga en audio
@@ -161,13 +167,21 @@ entrecortado, imagen desincronizada y un estado del que no se sale solo: mucho
 peor que medio segundo de retraso. Por eso el regulador frena cuando el
 colchón baja, no solo acelera cuando sube.
 
+**Se regula sobre la media del colchón, no sobre la lectura suelta.** El
+emisor entrega a ráfagas —solo codifica vídeo cuando la pantalla cambia— y una
+lectura pasa de 0,0 a 1,9 s en medio segundo. Corregir sobre ese valor
+persigue el ruido: el lazo oscila, se dispara un salto tras otro y eso se oye
+como saturación. Es la misma razón por la que scrcpy promedia su nivel de
+búfer antes de compensar.
+
 Lo que decide si la corrección se nota no es el techo sino su forma. La curva
 es un *smoothstep*: sale del reposo y llega al techo con pendiente nula, de
 modo que ni el instante en que empieza a corregir ni aquel en que deja de
 hacerlo tienen una costura audible —una recta acelera de golpe justo al cruzar
-el objetivo, que es donde más se oye—. Además la velocidad se mueve por una
-rampa acotada, unos siete segundos del reposo al techo, en vez de saltar de
-un valor a otro.
+el objetivo, que es donde más se oye—. Un tope holgado por vuelta recorta
+además algún pico suelto; apretarlo demasiado es contraproducente, porque la
+velocidad tarda entonces tanto en cruzar su rango que llega a frenar con el
+búfer lleno.
 
 Los números viven juntos al principio de `player.py`. Subir
 `LIVE_BUFFER_OBJETIVO` da más colchón frente a hipos de red a cambio de más

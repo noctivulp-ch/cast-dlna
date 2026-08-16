@@ -31,12 +31,15 @@ LIVE_BUFFER_MINIMO = 0.30     # por debajo se deja de acelerar y se recupera
 LIVE_SPEED_MAX = 1.04         # techo de velocidad
 LIVE_SPEED_MIN = 0.97         # suelo, para rehacer colchón sin que se note
 LIVE_ESCALA = 0.5             # exceso, en segundos, que lleva al techo
-LIVE_RAMPA = 0.003            # cuánto puede cambiar la velocidad por vuelta
+LIVE_SUAVIZADO = 0.03         # peso de cada lectura en la media del colchón
+LIVE_RAMPA = 0.008            # tope de cambio de velocidad por vuelta
 LIVE_REGULA_CADA = 0.5        # cada cuánto se revisa
 LIVE_READAHEAD = 5            # lectura por delante: saca el atraso del socket
-# Por encima de este atraso no se espera a reabsorberlo poco a poco y se salta
-# directamente a lo último recibido, como el `maxOffsetMs` de ExoPlayer.
-LIVE_SALTO = 1.2
+# Saltar a lo último recibido vacía el búfer de golpe —el seek hace flush del
+# demuxer, no avanza dentro de lo ya leído—, y con el búfer seco el sonido se
+# rompe. Queda solo como último recurso ante un atraso enorme y sostenido, no
+# como herramienta de ajuste fino.
+LIVE_SALTO = 3.0
 
 # Propiedades que toca el modo de baja latencia; se guardan al arrancar mpv
 # para poder restaurar el comportamiento normal al volver a un vídeo VOD.
@@ -69,6 +72,7 @@ class MpvPlayer:
         self._untimed_forzado = False
         self._low_latency = False
         self._speed_directo = 1.0
+        self._colchon_medio = None
         self._vod_defaults = {}
         threading.Thread(target=self._supervisor, daemon=True).start()
         threading.Thread(target=self._regular_directo, daemon=True).start()
@@ -298,7 +302,16 @@ class MpvPlayer:
             buffer = self._props.get("demuxer-cache-duration")
             if buffer is None:
                 continue
-            buffer = float(buffer)
+            # El colchón instantáneo es puro ruido: el emisor entrega a
+            # ráfagas y una sola lectura pasa de 0,0 a 1,1 s entre vueltas.
+            # Corregir sobre ese valor persigue el ruido y hace oscilar el
+            # sistema; se regula sobre la media, como hace scrcpy.
+            actual = float(buffer)
+            if self._colchon_medio is None:
+                self._colchon_medio = actual
+            else:
+                self._colchon_medio += (actual - self._colchon_medio) * LIVE_SUAVIZADO
+            buffer = self._colchon_medio
 
             if buffer > LIVE_SALTO:
                 salto = buffer - LIVE_BUFFER_OBJETIVO
@@ -315,15 +328,16 @@ class MpvPlayer:
             delta = objetivo - self._speed_directo
             if abs(delta) < 0.0005:
                 continue
-            # La rampa suaviza la corrección, pero quedarse sin colchón es una
-            # urgencia: ahí se frena de una vez en lugar de ir bajando poco a
-            # poco mientras el reproductor se queda seco.
-            urgente = buffer < LIVE_BUFFER_MINIMO
-            if not urgente and abs(delta) > LIVE_RAMPA:
+            # Tope holgado, solo para recortar un pico suelto. La versión
+            # anterior lo tenía tan apretado que la velocidad tardaba diez
+            # segundos en cruzar su rango: se veía frenando con el búfer lleno
+            # porque seguía viniendo de un mínimo anterior, y el lazo oscilaba.
+            if abs(delta) > LIVE_RAMPA:
                 objetivo = self._speed_directo + (LIVE_RAMPA if delta > 0 else -LIVE_RAMPA)
             self.set_property("speed", round(objetivo, 4))
             self._speed_directo = objetivo
-            self.cfg.debug(f"[mpv] atraso {buffer:.2f}s → velocidad {objetivo:.4f}")
+            self.cfg.debug(f"[mpv] colchón {actual:.2f}s (media {buffer:.2f}s)"
+                           f" → velocidad {objetivo:.4f}")
 
     def _apply_untimed_if_silent(self):
         """Sin pista de audio mpv no tiene reloj al que engancharse y el
@@ -367,6 +381,7 @@ class MpvPlayer:
             self._image = image
             self._untimed_forzado = False
             self._speed_directo = 1.0
+            self._colchon_medio = None
             # Una imagen dura `image-display-duration` (5 s por defecto) y
             # después mpv vuelve a idle y la ventana se cierra. Un cast de una
             # foto tiene que quedarse hasta que el controlador mande otra cosa.
