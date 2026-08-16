@@ -34,6 +34,9 @@ def parse_args(argv=None):
                     help="Abrir cada cast en pantalla completa")
     ap.add_argument("--no-osd", action="store_true",
                     help="Desactivar el OSD de mpv en los comandos remotos")
+    ap.add_argument("--ignore-remote-volume", action="store_true",
+                    help="Aceptar SetVolume/SetMute del controlador sin aplicarlos: "
+                         "el volumen se gestiona solo en este equipo")
     ap.add_argument("--no-live-latency", action="store_true",
                     help="No aplicar el modo de baja latencia a streams en "
                          "directo (MPEG-TS, compartir pantalla)")
@@ -70,6 +73,7 @@ class Config:
         self.fullscreen = args.fullscreen
         self.osd = not args.no_osd
         self.live_latency = not args.no_live_latency
+        self.ignore_remote_volume = args.ignore_remote_volume
         self.verbose = args.verbose
 
     def log(self, *parts):

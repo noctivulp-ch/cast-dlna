@@ -302,6 +302,13 @@ class Renderer:
             raise UPnPFault(600)
         if not 0 <= level <= 100:
             raise UPnPFault(601, "Argument Value Out of Range")
+        # Rechazar la acción haría que el controlador diese el renderer por
+        # roto, así que se acepta y se descarta: el mando de volumen del móvil
+        # controla el reproductor de este equipo, que no siempre es lo que se
+        # quiere al castear.
+        if self.cfg.ignore_remote_volume:
+            self.cfg.log(f"🔇 SetVolume({level}) ignorado (--ignore-remote-volume)")
+            return {}
         self.player.set_volume(level)
         self.cfg.log(f"🔊 volumen → {level}")
         return {}
@@ -325,6 +332,9 @@ class Renderer:
 
     def _rcs_SetMute(self, args):
         desired = (args.get("DesiredMute") or "0").strip().lower()
+        if self.cfg.ignore_remote_volume:
+            self.cfg.log(f"🔇 SetMute({desired}) ignorado (--ignore-remote-volume)")
+            return {}
         self.player.set_mute(desired in ("1", "true", "yes"))
         return {}
 
