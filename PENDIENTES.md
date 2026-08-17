@@ -50,6 +50,34 @@ cuenta que el teléfono emita un stream que este renderer ya sepa reproducir.
 Ventaja frente al compartir pantalla: sin vídeo no hay que codificar nada
 pesado, y el problema de sincronía A/V desaparece por completo.
 
+## Anunciarse como Chromecast o pantalla inalámbrica — estudiado, descartado
+
+Se miró la viabilidad de que el receptor se anuncie además como Chromecast o
+como pantalla inalámbrica genérica. Ninguna de las dos sale a cuenta.
+
+**Google Cast.** Existe [shanocast](https://github.com/rgerganov/shanocast),
+receptor en código abierto sobre Openscreen. El muro es la autenticación: el
+emisor verifica al receptor y se niega a emitir si falla, y pasarla exige un
+`client_auth_certificate` firmado por Google. Shanocast lo sortea con firmas
+precomputadas extraídas de un producto comercial, que además caducan cada dos
+días. Y aun así cubre el espejado de Chrome, no las apps de móvil, que usan
+identificadores de aplicación registrados. Base inservible para algo propio.
+
+**Miracast.** Existe [MiracleCast](https://github.com/albfan/miraclecast)
+(LGPL), con *source* y *sink*. Pero necesita Wi-Fi P2P vía `wpa_supplicant`,
+su desarrollo lleva años parado esperando APIs de P2P en los gestores de red,
+y sobre todo Android retiró Miracast de AOSP —abandonado en Android 6,
+descontinuado desde Android 9—, así que solo sobrevive en capas de fabricante.
+Mucho trabajo en el receptor para depender de algo que el emisor está
+retirando.
+
+**FCast, en cambio, sí.** Es abierto, sin autenticación de por medio, y CastLab
+ya lo habla: `FCastClient.ts`, puerto 46899, descubrimiento por mDNS
+`_fcast._tcp`, y un protocolo binario simple de longitud + opcode + JSON. Los
+`{"version":3}` que aparecían en el registro del renderer eran CastLab
+preguntando si éramos un receptor FCast. Es la ampliación más barata si algún
+día se quiere cubrir más emisores.
+
 ## Receptor nativo para Android TV — planificado
 
 Reescritura del receptor como app de Android TV, con
