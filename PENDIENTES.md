@@ -60,6 +60,31 @@ control de velocidad para directos de fábrica (`targetOffsetMs`,
 `minPlaybackSpeed`, `maxPlaybackSpeed`), y al no depender de mpv tampoco
 arrastra la limitación del `audio-buffer=0`.
 
+### Wulfenite UI: revisado, sirve
+
+El paquete `Compose` cubre ya lo que faltaba en la revisión anterior: `Aviso`,
+`Controles` (botón primario, botón, botón plano, campo, interruptor) y sobre
+todo `foco/Foco.kt`, que era el bloqueante para televisión. 40 pruebas, todas
+en verde.
+
+El foco está resuelto con criterio de sala, no de escritorio: canto de 3 dp
+*«porque un televisor se mira a tres metros y un escalón de 1 dp ahí no
+existe»*, más el pozo aclarado para que se distinga de seleccionado cuando los
+dos caen juntos —que es lo normal recorriendo una lista con el mando—. Y los
+controles comparten una única `MutableInteractionSource` entre el `clickable`
+y el pintado, que es justo el fallo por el que el canto no se entera de nada.
+
+Lo que habría que añadir al montar el receptor:
+
+- **Una barra de progreso enfocable.** No existe ninguna, y en un reproductor
+  es la pieza central: sin ella no hay forma de buscar con el mando. Es
+  específica de reproductor, así que tiene sentido que no estuviera antes.
+- **Foco inicial por pantalla** (`FocusRequester`). No hay ayuda en la
+  librería, pero es un par de líneas en cada pantalla de la app.
+- El ejemplo es una app de móvil: no declara `LEANBACK_LAUNCHER`, banner ni
+  `uses-feature` de televisión. Eso va en el manifest del receptor, no en la
+  librería.
+
 Lo que se reutiliza tal cual de este proyecto:
 
 - `scripts/probe-renderer.py` — 27 acciones UPnP contra el receptor nuevo.
