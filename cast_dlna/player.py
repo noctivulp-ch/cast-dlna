@@ -19,9 +19,7 @@ OBSERVED = [
     "demuxer-cache-duration",
 ]
 
-# Lectura por delante en directo. Sin ella el atraso se acumula en el búfer
-# del socket, fuera del alcance del reproductor.
-LIVE_READAHEAD = 5
+
 
 # Propiedades que toca el modo de baja latencia; se guardan al arrancar mpv
 # para poder restaurar el comportamiento normal al volver a un vídeo VOD.
@@ -219,28 +217,23 @@ class MpvPlayer:
                 self._vod_defaults[prop] = value
 
     def set_low_latency(self, enabled):
-        """El perfil low-latency de mpv recorta el análisis del demuxer y los
-        búferes de salida, que en un directo son puro retraso.
+        """El perfil low-latency de mpv desactiva caché y readahead y recorta
+        el análisis del demuxer. En VOD costaría robustez, pero en un stream
+        en directo esos búferes son puro retraso.
 
-        Lo que no se hereda del perfil es su `cache=no`. Sin caché el retraso
-        que se acumula por la diferencia entre el reloj del emisor y el de
-        este equipo no desaparece: se queda en el búfer del socket, donde no
-        se puede ni medir ni drenar, y crece sin techo. Con caché el atraso se
-        hace visible y el reproductor puede consumirlo.
-
-        No se corrige el atraso con la velocidad de reproducción: cualquier
-        valor distinto de 1,0 satura el audio en este receptor, donde el
-        propio perfil deja `audio-buffer=0` y el filtro de tempo sin margen.
-        Tampoco con `seek`: un directo por HTTP no es «seekable» y mpv lo
-        ignora en silencio.
+        El precio es que el retraso que acumula la diferencia entre el reloj
+        del emisor y el de este equipo se queda en el búfer del socket, donde
+        no se puede ni medir ni consumir. Se probó a darle caché para poder
+        verlo y corregirlo con la velocidad de reproducción, y salió peor:
+        ver el apartado del retraso en directo del `README.md`.
         """
         if enabled == self._low_latency:
             return
         if enabled:
             self.command("apply-profile", "low-latency")
-            self.set_property("cache", "yes")
-            self.set_property("demuxer-readahead-secs", LIVE_READAHEAD)
-            self.set_property("cache-secs", LIVE_READAHEAD)
+            self.set_property("cache", "no")
+            self.set_property("demuxer-readahead-secs", 0)
+            self.set_property("cache-secs", 0)
         else:
             for prop, value in self._vod_defaults.items():
                 self.set_property(prop, value)
