@@ -133,45 +133,25 @@ mpv, porque el aviso de `track-list` suele adelantar al de `untimed` y
 consultarlo dejaba el modo puesto para siempre. `scripts/test-untimed.py`
 reproduce ese orden.
 
-### El retraso que se acumula en un directo
+### El retraso en un directo, y por qué no se corrige aquí
 
-Los relojes del emisor y del receptor nunca coinciden del todo, así que en un
-directo el desfase crece sin techo salvo que alguien lo reabsorba. Medido de
-punta a punta con `scripts/measure-total-latency.sh`: 0,5 s a los pocos
-segundos y 2,0 s cincuenta segundos después.
+Los relojes del emisor y del receptor nunca coinciden del todo, así que el
+desfase de un directo tiende a crecer. En este receptor se dejó de intentar
+corregirlo, después de comprobar que las tres piezas necesarias fallan:
 
-Poner `cache=no` —lo que hace el perfil `low-latency`— no lo evita: solo
-esconde el atraso, que pasa a acumularse en el búfer del socket, donde no se
-puede ni medir ni drenar. Por eso `demuxer-cache-duration` marcaba 0,0
-mientras la latencia crecía.
+- **La velocidad de reproducción satura el audio.** Cualquier valor distinto
+  de 1,0 —hacia arriba o hacia abajo— se oye, porque el perfil de baja
+  latencia deja `audio-buffer=0` y el filtro de tempo no tiene margen.
+- **`seek` no sirve.** Un directo por HTTP no es *seekable*: mpv lo ignora en
+  silencio, de modo que un supuesto «salto al directo» no mueve nada.
+- **`demuxer-cache-duration` no mide el retraso.** Mide cuántos datos hay por
+  delante sin reproducir, que en un emisor que entrega a ráfagas sube y baja
+  sin relación con la latencia. Corregir sobre esa señal empeora las cosas:
+  ante una ráfaga acelera, consume el colchón y se queda seco.
 
-El receptor mantiene ahora una caché con lectura por delante, para que el
-atraso sea visible, y un regulador que lo reabsorbe:
-
-| Atraso | Qué hace |
-|---|---|
-| ≤ 0,35 s | nada, velocidad normal |
-| 0,35–1,5 s | reproduce hasta un 3 % más rápido hasta recuperarlo |
-| > 1,5 s | salta a lo último recibido |
-
-El regulador solo acelera; nunca reproduce por debajo de la velocidad normal.
-Frenar para rehacer colchón parece la mitad simétrica que falta, pero en este
-receptor el cambio de tempo por debajo de 1,0 se oye como saturación, y con
-`audio-buffer=0` —que impone el perfil de baja latencia— el filtro de tempo no
-tiene margen para disimularlo.
-
-Se regula sobre la lectura instantánea del colchón, no sobre una media. Una
-media parece más estable, pero retrasa la reacción tanto como su constante de
-tiempo: con el búfer ya vacío la media todavía marcaba lleno y el regulador
-seguía acelerando, que es justo lo que no debe hacer. Como la corrección solo
-actúa por encima del objetivo, una lectura baja apaga la corrección de
-inmediato, que es el comportamiento seguro.
-
-Es el mismo esquema del control de velocidad para directos de ExoPlayer
-(`targetOffsetMs`, `maxPlaybackSpeed`, `maxOffsetMs`), que es justo lo que la
-versión de Android TV tendrá de fábrica. Con la corrección de tono de mpv, un
-5 % no se oye. `scripts/test-live-regulator.py` comprueba la curva y la
-convergencia.
+Lo que sí se mantiene es la lectura por delante (`demuxer-readahead-secs`), que
+saca el atraso del búfer del socket —donde no se puede ni ver ni consumir— y
+lo pone en manos del reproductor.
 
 Repartiendo la latencia de un compartir pantalla medida en esta máquina: la
 captura, la codificación y la red suman 53–113 ms, el demuxer del receptor
