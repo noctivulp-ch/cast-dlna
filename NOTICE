@@ -1,0 +1,19 @@
+cast-dlna
+Copyright (C) 2026 NoctiVulp
+
+This program is free software: you can redistribute it and/or modify it under the terms of the
+GNU General Public License as published by the Free Software Foundation,
+either version 3 of the License, or (at your option) any later version.
+SPDX-License-Identifier: GPL-3.0-or-later
+
+This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
+without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+
+El nombre «NoctiVulp», el de este programa y sus logotipos no se licencian: ver TRADEMARKS.md.
+
+Componentes de terceros
+-----------------------
+
+- Python (intérprete incluido en el binario de Nuitka) — PSF-2.0
+- mpv — GPL-2.0-or-later / LGPL-2.1-or-later; se usa como programa externo, no se incluye
+- El parche patches/castlab-screenshare-audio.patch es obra derivada de CastLab — GPL-3.0
