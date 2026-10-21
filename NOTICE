@@ -16,4 +16,3 @@ Componentes de terceros
 
 - Python (intérprete incluido en el binario de Nuitka) — PSF-2.0
 - mpv — GPL-2.0-or-later / LGPL-2.1-or-later; se usa como programa externo, no se incluye
-- El parche patches/castlab-screenshare-audio.patch es obra derivada de CastLab — GPL-3.0

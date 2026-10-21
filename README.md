@@ -47,10 +47,17 @@ python3 cast-dlna.py --name "Salón"      # sin compilar
 cast-dlna --fullscreen -v
 ```
 
+## Emisor con audio
+
+Para compartir la pantalla del teléfono **con sonido**, el emisor recomendado es
+[CastLab Audio](https://github.com/noctivulp-ch/CastLabAudio), un fork de CastLab que añade el
+audio de reproducción al stream.
+
 ## Documentación
 
-[`docs/guia.md`](docs/guia.md): comandos soportados, compatibilidad con cada controlador, volumen,
-cambios de IP y arquitectura.
+- [`docs/guia.md`](docs/guia.md): comandos soportados, compatibilidad con cada controlador,
+  volumen, cambios de IP y arquitectura.
+- [`docs/callejones-recorridos.md`](docs/callejones-recorridos.md): lo que se probó y no funcionó.
 
 ## Licencia
 
