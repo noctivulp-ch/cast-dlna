@@ -50,7 +50,7 @@ cast-dlna --fullscreen -v
 ## Emisor con audio
 
 Para compartir la pantalla del teléfono **con sonido**, el emisor recomendado es
-[CastLab Audio](https://github.com/noctivulp-ch/CastLabAudio), un fork de CastLab que añade el
+[CastLabNV](https://github.com/noctivulp-ch/CastLabNV), un fork de CastLab que añade el
 audio de reproducción al stream.
 
 ## Documentación
